@@ -1,0 +1,378 @@
+<!DOCTYPE html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8">
+		<meta name="viewport" content="width=device-width, height=device-height, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
+		<meta name="mobile-web-app-capable" content="yes">
+		<meta name="apple-mobile-web-app-capable" content="yes">
+		<meta name="theme-color" content="#0d0b16">
+		<title>Ghauntlet</title>
+		<!-- Ghauntlet web shell (web/shell.html, the custom_html_shell of the "Web" and
+		     "Web Mobile" presets). Colours from data/main/edition.json: bg #0d0b16, panel
+		     #1d1a2b, ink #efe6d2, pumpkin #ff7a1a, candle #ffc95a, moon #9fb8ff.
+		     One page, two packs: phones and tablets load index.mobile.pck, desktops
+		     index.pck (?pack=mobile|desktop forces one). tools/web_build.sh fills in
+		     OB_MOBILE_PCK_SIZE (the phone pack's size, for the progress bar) and OB_ART_FILES
+		     (which of index.logo.webp / index.bg.webp it copied from assets/main/ui).
+		     The loading cover stays up until the game has drawn its first screen
+		     (window.obGameShown, core/arcade.gd). -->
+		<style>
+html, body, #canvas { margin: 0; padding: 0; border: 0; }
+html, body { width: 100%; height: 100%; }
+body {
+	background: #0d0b16;
+	color: #efe6d2;
+	overflow: hidden;
+	touch-action: none;
+	-webkit-user-select: none;
+	user-select: none;
+	-webkit-touch-callout: none;
+	-webkit-tap-highlight-color: transparent;
+	overscroll-behavior: none;
+	font-family: 'Avenir Next', 'Segoe UI', system-ui, sans-serif;
+}
+#canvas { display: block; touch-action: none; }
+#canvas:focus { outline: none; }
+.cover {
+	position: absolute; inset: 0;
+	display: flex; flex-direction: column; justify-content: center; align-items: center;
+	gap: 0.7rem; text-align: center; padding: 1rem; box-sizing: border-box;
+	background: radial-gradient(ellipse at 50% 115%, #3a2a12 0%, #2a2640 30%, #1d1a2b 52%, #0d0b16 78%);
+}
+.cover.art {
+	background:
+		linear-gradient(180deg, rgba(18, 14, 31, 0.05) 0%, rgba(18, 14, 31, 0.35) 62%, rgba(18, 14, 31, 0.82) 100%),
+		url('index.bg.webp') center / cover no-repeat,
+		radial-gradient(ellipse at 50% 115%, #3a2a12 0%, #2a2640 30%, #1d1a2b 52%, #0d0b16 78%);
+}
+#status { visibility: hidden; z-index: 4; transition: opacity 0.45s ease-out; }
+#status.leaving { opacity: 0; pointer-events: none; }
+#status-cauldron { width: min(30vw, 150px, 26vh); height: auto; overflow: visible; }
+#status-cauldron .bub { animation: flick 1.3s ease-in-out infinite; transform-box: fill-box; transform-origin: center; }
+#status-cauldron .b2 { animation-delay: 0.6s; }
+#status-cauldron .b3 { animation-delay: 1.2s; }
+	100% { transform: translateY(-46px) scale(1.15); opacity: 0; }
+}
+#status-logo { display: none; width: min(78vw, 540px, 100vh); height: auto; filter: drop-shadow(0 6px 14px rgba(0, 0, 0, 0.6)); }
+#status-title {
+	font-family: 'Avenir Next', 'Futura', system-ui, sans-serif;
+	font-weight: 900; font-size: clamp(2.2rem, 9vw, 4rem); letter-spacing: 0.02em;
+	color: #ff7a1a; text-shadow: 0 4px 0 #050409, 0 0 22px rgba(255, 138, 30, 0.35);
+}
+#status-tag { color: #a9a3bb; font-size: clamp(0.85rem, 3.4vw, 1.05rem); text-shadow: 0 1px 4px rgba(0, 0, 0, 0.9); }
+#status-bar {
+	width: min(60vw, 320px); height: 10px; margin-top: 0.3rem;
+	border-radius: 999px; background: rgba(7, 5, 13, 0.6); overflow: hidden;
+	box-shadow: 0 0 0 2px rgba(99, 224, 122, 0.28);
+	display: none;
+}
+#status-fill {
+	height: 100%; width: 0%;
+	background: linear-gradient(90deg, #ff9a3a, #ffc95a);
+	border-radius: 999px;
+	transition: width 0.2s ease-out;
+}
+#status-fill.indeterminate { width: 35%; animation: slide 1.2s ease-in-out infinite alternate; }
+@keyframes slide { from { margin-left: 0%; } to { margin-left: 65%; } }
+#status-notice {
+	display: none;
+	background: #efe6d2; color: #1d1a2b;
+	border-radius: 14px; line-height: 1.45;
+	max-width: 30rem; padding: 1rem 1.25rem;
+	box-shadow: 0 6px 14px rgba(0, 0, 0, 0.45);
+}
+#status-splash { display: none; }
+#lost { display: none; z-index: 6; }
+#lost.show { display: flex; }
+#lost-title { font-weight: 900; font-size: 1.6rem; color: #ffc95a; }
+#lost-tag { max-width: 26rem; line-height: 1.45; text-shadow: 0 1px 4px rgba(0, 0, 0, 0.9); }
+#lost button {
+	font: inherit; font-weight: 800; color: #1d1a2b; background: #ffc95a;
+	border: 0; border-radius: 999px; padding: 0.6rem 1.4rem; cursor: pointer;
+	box-shadow: 0 4px 0 #8a3a10;
+}
+#lost button:hover { background: #ffdb8a; }
+#lost button:active { transform: translateY(3px); box-shadow: 0 1px 0 #8a3a10; }
+#turn { display: none; z-index: 5; }
+#turn.show { display: flex; }
+#turn svg { width: 92px; height: 92px; }
+#turn-title { font-weight: 800; font-size: 1.35rem; color: #ffc95a; }
+#turn-tag { color: #a9a3bb; font-size: 0.95rem; max-width: 19rem; line-height: 1.4; }
+		@keyframes flick { 0%, 100% { opacity: 1; } 45% { opacity: 0.55; } 60% { opacity: 0.9; } }
+</style>
+		<link id="-gd-engine-icon" rel="icon" type="image/png" href="index.icon.png" />
+<link rel="apple-touch-icon" href="index.apple-touch-icon.png"/>
+
+	</head>
+	<body>
+		<canvas id="canvas">Your browser does not support the canvas tag.</canvas>
+		<noscript>Ghauntlet needs JavaScript.</noscript>
+		<div id="status" class="cover">
+			<img id="status-splash" class="show-image--false fullsize--true use-filter--true" src="index.png" alt="">
+			<svg id="status-cauldron" viewBox="0 0 120 110" aria-hidden="true">
+				<path d="M58 14 C56 6 62 2 68 4" fill="none" stroke="#3f6a2a" stroke-width="6" stroke-linecap="round"/>
+				<ellipse cx="60" cy="62" rx="50" ry="40" fill="#ff7a1a" stroke="#050409" stroke-width="5"/>
+				<path d="M40 26 C30 46 30 80 42 100 M80 26 C90 46 90 80 78 100 M60 22 V102" fill="none" stroke="#c4520f" stroke-width="4"/>
+				<path class="bub" d="M30 52 l14 -10 l6 14 Z" fill="#ffc95a" stroke="#050409" stroke-width="3"/>
+				<path class="bub b2" d="M90 52 l-14 -10 l-6 14 Z" fill="#ffc95a" stroke="#050409" stroke-width="3"/>
+				<path class="bub b3" d="M30 74 q30 22 60 0 l-8 2 l-4 8 l-8 -6 l-6 8 l-6 -8 l-8 6 l-4 -8 Z" fill="#ffc95a" stroke="#050409" stroke-width="3"/>
+			</svg>
+			<img id="status-logo" alt="Ghauntlet">
+			<div id="status-title">Ghauntlet</div>
+			<div id="status-tag">Unlocking the crypt&hellip;</div>
+			<div id="status-bar"><div id="status-fill"></div></div>
+			<div id="status-notice"></div>
+		</div>
+		<div id="lost" class="cover" role="alert">
+			<div id="lost-title">The torches went out</div>
+			<div id="lost-tag">This browser stopped the game's graphics (its WebGL context was lost). Reloading lights the crypt again.</div>
+			<button type="button" onclick="location.reload()">Light them again</button>
+		</div>
+		<div id="turn" class="cover" aria-live="polite">
+			<svg viewBox="0 0 92 92" aria-hidden="true">
+				<rect x="28" y="10" width="36" height="62" rx="7" fill="none" stroke="#a9a3bb" stroke-width="4" stroke-dasharray="6 5"/>
+				<rect x="12" y="34" width="62" height="36" rx="7" fill="#1d1a2b" stroke="#ff7a1a" stroke-width="4"/>
+				<circle cx="66" cy="52" r="3" fill="#ff7a1a"/>
+				<path d="M70 18 a22 22 0 0 1 10 22" fill="none" stroke="#ffc95a" stroke-width="4" stroke-linecap="round"/>
+				<path d="M74 40 l6 1 l2 -6" fill="none" stroke="#ffc95a" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+			</svg>
+			<div id="turn-title">Turn your phone sideways</div>
+			<div id="turn-tag">The crypt is wide. Walk with your left thumb, fight, cast and dodge with your right.</div>
+		</div>
+
+		<script>
+// Audio unlock. Browsers keep audio suspended until a user gesture, and iOS
+// Safari only lets it start *inside* one. The engine creates its AudioContext
+// out of reach, so the constructor is wrapped here, before the engine loads,
+// and every instance is recorded. Each tap / click / key then, synchronously
+// in the handler (capture phase):
+//   * on iOS, sets navigator.audioSession to "playback" (iOS 17+) and plays a
+//     silent looping <audio>, so the ring/silent switch does not mute the game;
+//   * resumes every context that is not running.
+// window.obAudioUnlocked turns true once a gesture has run them all. The game
+// mixes its own audio (project.godot audio/general/default_playback_type.web=0),
+// so music started before the tap simply becomes audible then.
+// The listeners stay: iOS suspends ("interrupted") on calls and app switches.
+(function () {
+	const AC = window.AudioContext || window.webkitAudioContext;
+	const ctxs = [];
+	const ua = navigator.userAgent;
+	const IOS = /iPhone|iPad|iPod/.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1);
+	let gestured = false;
+	let tag = null;
+	window.obAudioUnlocked = false;
+	window.obAudioContexts = ctxs;
+	function update() {
+		const live = ctxs.filter((c) => c.state !== 'closed');
+		if (gestured && live.length > 0 && live.every((c) => c.state === 'running')) {
+			window.obAudioUnlocked = true;
+		}
+	}
+	if (AC) {
+		const Wrapped = function (...args) {
+			const c = new AC(...args);
+			ctxs.push(c);
+			c.addEventListener('statechange', update);
+			return c;
+		};
+		Wrapped.prototype = AC.prototype;
+		window.AudioContext = Wrapped;
+		if (window.webkitAudioContext) { window.webkitAudioContext = Wrapped; }
+	}
+	// 0.5 s of 8-bit silence (a WAV built here: no extra file to fetch)
+	function silentWav() {
+		const rate = 8000, n = 4000, v = new DataView(new ArrayBuffer(44 + n));
+		const str = (o, t) => { for (let i = 0; i < t.length; i++) { v.setUint8(o + i, t.charCodeAt(i)); } };
+		str(0, 'RIFF'); v.setUint32(4, 36 + n, true); str(8, 'WAVE'); str(12, 'fmt ');
+		v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
+		v.setUint32(24, rate, true); v.setUint32(28, rate, true); v.setUint16(32, 1, true); v.setUint16(34, 8, true);
+		str(36, 'data'); v.setUint32(40, n, true);
+		for (let i = 0; i < n; i++) { v.setUint8(44 + i, 128); }
+		return URL.createObjectURL(new Blob([v.buffer], { type: 'audio/wav' }));
+	}
+	function playbackSession() {
+		if (!IOS || document.hidden) { return; }
+		try { if (navigator.audioSession) { navigator.audioSession.type = 'playback'; } } catch (e) { /* older iOS */ }
+		if (!tag) {
+			tag = document.createElement('audio');
+			tag.setAttribute('playsinline', '');
+			tag.setAttribute('x-webkit-airplay', 'deny');
+			tag.disableRemotePlayback = true;
+			tag.loop = true;
+			tag.preload = 'auto';
+			tag.src = silentWav();
+		}
+		if (tag.paused) { const p = tag.play(); if (p) { p.catch(() => {}); } }
+	}
+	function unlock(ev) {
+		if (ev && ev.isTrusted === false) { return; }
+		playbackSession();
+		if (ctxs.length > 0) { gestured = true; }
+		ctxs.forEach((c) => {
+			if (c.state !== 'running' && c.state !== 'closed') {
+				const p = c.resume();
+				if (p) { p.then(update, () => {}); }
+			}
+		});
+		update();
+	}
+	['pointerdown', 'pointerup', 'mousedown', 'touchstart', 'touchend', 'click', 'keydown'].forEach((e) =>
+		window.addEventListener(e, unlock, { capture: true, passive: true }));
+	// the silent loop would show in the lock screen's player: pause it while hidden
+	document.addEventListener('visibilitychange', () => {
+		if (document.hidden) {
+			if (tag && !tag.paused) { tag.pause(); }
+		} else if (gestured) {
+			playbackSession();
+			ctxs.forEach((c) => { if (c.state !== 'running' && c.state !== 'closed') { c.resume().catch(() => {}); } });
+		}
+	});
+}());
+
+// Phones and tablets get the phone pack, the turn-sideways card and a capped
+// pixel ratio (a 3x screen would render the crypt at 9x the pixels for
+// little gain). ?pack=mobile / ?pack=desktop forces a pack (testing).
+const OB_QUERY = new URLSearchParams(location.search);
+const OB_PHONE = (function () {
+	const forced = OB_QUERY.get('pack');
+	if (forced === 'mobile' || forced === 'desktop') { return forced === 'mobile'; }
+	const ua = navigator.userAgent;
+	return /iPhone|iPad|iPod|Android/i.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1)
+		|| window.matchMedia('(pointer: coarse) and (max-height: 1100px)').matches;
+}());
+(function () {
+	const real = window.devicePixelRatio || 1;
+	const cap = OB_PHONE ? 1.5 : 2;
+	if (real > cap) {
+		try { Object.defineProperty(window, 'devicePixelRatio', { get: () => cap, configurable: true }); } catch (e) { /* keep the real one */ }
+	}
+}());
+		</script>
+		<script src="index.js"></script>
+		<script>
+const GODOT_CONFIG = {"args":[],"canvasResizePolicy":2,"emscriptenPoolSize":8,"ensureCrossOriginIsolationHeaders":false,"executable":"index","experimentalVK":false,"fileSizes":{"index.pck":45547576,"index.wasm":37686550},"focusCanvas":true,"gdextensionLibs":[],"godotPoolSize":4};
+const GODOT_THREADS_ENABLED = false;
+const OB_PACK = OB_PHONE ? 'index.mobile.pck' : 'index.pck';  // phones never download the desktop pack
+if (GODOT_CONFIG.fileSizes && '35410652' !== 'OB_' + 'MOBILE_PCK_SIZE') {
+	GODOT_CONFIG.fileSizes['index.mobile.pck'] = Number('35410652');
+}
+const OB_ART = '' === 'OB_' + 'ART_FILES' ? [] : ''.split(',').filter((s) => s);
+// The page URL carries the game's dev flags for scripted checks, e.g.
+// ?run=endless&bots=0&autoplay=1&time-scale=4 (core/arcade.gd),
+// ?screen=options (ui/app.gd), ?touch=1 (core/mobile.gd);
+// ?quality=phone&qset=aa:0 (core/quality.gd) and ?room=CODE (the Online
+// addon) are read by the game itself.
+const OB_ARGS = (function () {
+	const allowed = ['screen', 'level', 'mode', 'run', 'hero', 'bots', 'autoplay', 'seed', 'time-scale', 'no-backdrop'];
+	const user = [];
+	for (const k of allowed) {
+		if (OB_QUERY.has(k)) { user.push('--' + k + '=' + (OB_QUERY.get(k) || '1')); }
+	}
+	if (OB_QUERY.has('touch')) { user.push('--touch'); }  // core/mobile.gd: the bare flag
+	const engineArgs = OB_QUERY.get('verbose') ? ['--verbose'] : [];
+	return user.length ? engineArgs.concat(['--'], user) : engineArgs;
+}());
+const engine = new Engine(GODOT_CONFIG);
+
+(function () {
+	const overlay = document.getElementById('status');
+	const bar = document.getElementById('status-bar');
+	const fill = document.getElementById('status-fill');
+	const notice = document.getElementById('status-notice');
+	const turn = document.getElementById('turn');
+	let initializing = true;
+	let mode = '';
+
+	// Astra's logo and key art, when the build copied them (else the drawn jack-o'-lantern)
+	if (OB_ART.includes('bg')) {
+		overlay.classList.add('art');
+		document.getElementById('lost').classList.add('art');
+	}
+	if (OB_ART.includes('logo')) {
+		const logo = document.getElementById('status-logo');
+		logo.onload = () => {
+			logo.style.display = 'block';
+			document.getElementById('status-title').style.display = 'none';
+			document.getElementById('status-cauldron').style.display = 'none';
+		};
+		logo.src = 'index.logo.webp';
+	}
+
+	function setMode(m) {
+		if (mode === m || !initializing) { return; }
+		if (m === 'hidden') {
+			// fade out over the game's first frame
+			initializing = false;
+			overlay.classList.add('leaving');
+			setTimeout(() => overlay.remove(), 600);
+			return;
+		}
+		overlay.style.visibility = 'visible';
+		bar.style.display = m === 'progress' ? 'block' : 'none';
+		notice.style.display = m === 'notice' ? 'block' : 'none';
+		mode = m;
+	}
+
+	function fail(err) {
+		console.error(err);
+		const text = err instanceof Error ? err.message : (typeof err === 'string' ? err : 'The crypt would not open.');
+		notice.textContent = '';
+		text.split('\n').forEach((line) => { notice.appendChild(document.createTextNode(line)); notice.appendChild(document.createElement('br')); });
+		setMode('notice');
+		initializing = false;
+	}
+
+	// A landscape game: on a phone held upright, ask for it sideways.
+	function checkTurn() {
+		turn.classList.toggle('show', OB_PHONE && window.innerHeight > window.innerWidth * 1.05);
+	}
+	window.addEventListener('resize', checkTurn);
+	window.addEventListener('orientationchange', checkTurn);
+	checkTurn();
+
+	// The browser can drop the WebGL context (GPU reset, memory pressure; the
+	// engine cannot rebuild it): say so and offer a reload, never a black page.
+	document.getElementById('canvas').addEventListener('webglcontextlost', () => {
+		document.getElementById('lost').classList.add('show');
+	});
+
+	// Keep keyboard focus on the game after taps on the page.
+	document.addEventListener('pointerdown', () => {
+		const c = document.getElementById('canvas');
+		if (c && document.activeElement !== c) { c.focus(); }
+	}, true);
+	// The page itself never zooms (pinch, double-tap) or scrolls.
+	document.addEventListener('gesturestart', (e) => e.preventDefault());
+	document.addEventListener('dblclick', (e) => e.preventDefault());
+	document.addEventListener('touchmove', (e) => { if (e.touches.length > 1) { e.preventDefault(); } }, { passive: false });
+	document.addEventListener('wheel', (e) => { if (e.ctrlKey) { e.preventDefault(); } }, { passive: false });
+
+	const missing = Engine.getMissingFeatures({ threads: GODOT_THREADS_ENABLED });
+	if (missing.length !== 0) {
+		fail('This browser is missing features the game needs:\n' + missing.join('\n') + '\nTry a current Chrome, Edge, Firefox or Safari.');
+		return;
+	}
+	setMode('progress');
+	engine.startGame({
+		mainPack: OB_PACK,
+		args: OB_ARGS,
+		onProgress: function (current, total) {
+			if (current > 0 && total > 0) {
+				fill.classList.remove('indeterminate');
+				fill.style.width = Math.min(100, (100 * current) / total).toFixed(1) + '%';
+			} else {
+				fill.classList.add('indeterminate');
+			}
+		},
+	}).then(() => {
+		// the engine runs; core/arcade.gd calls obGameShown once the first
+		// screen is drawn (hand over after a moment in any case)
+		bar.style.display = 'none';
+		setTimeout(() => setMode('hidden'), 6000);
+	}, fail);
+	window.obGameShown = () => setMode('hidden');
+}());
+		</script>
+	</body>
+</html>
+
